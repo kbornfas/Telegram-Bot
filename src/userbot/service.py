@@ -55,8 +55,8 @@ class AddUserService:
         self._worker_task: asyncio.Task[None] | None = None
         self._worker_started = asyncio.Event()
         self._running = False
-    self._invite_interval = 1.0
-    self._last_invite_at = 0.0
+        self._invite_interval = 1.0
+        self._last_invite_at = 0.0
 
     async def start(self) -> None:
         self._ensure_settings()
