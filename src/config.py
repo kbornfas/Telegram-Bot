@@ -25,6 +25,7 @@ class TelethonSettings:
     session_name: str = "userbot_session"
     phone_number: str | None = None
     password: str | None = None
+    invite_interval_seconds: float = 1.0
 
 
 def parse_allowed_chats(raw: str | None) -> List[int]:
@@ -64,10 +65,19 @@ def load_telethon_settings() -> TelethonSettings:
     session_name = os.getenv("TELETHON_SESSION_NAME", "userbot_session")
     phone_number = os.getenv("TELETHON_PHONE_NUMBER")
     password = os.getenv("TELETHON_PASSWORD")
+    try:
+        invite_interval_raw = os.getenv("TELETHON_INVITE_INTERVAL_SECONDS")
+        invite_interval = float(invite_interval_raw) if invite_interval_raw else 1.0
+        if invite_interval < 0:
+            raise ValueError
+    except ValueError as exc:
+        raise RuntimeError("TELETHON_INVITE_INTERVAL_SECONDS must be a non-negative number") from exc
+
     return TelethonSettings(
         api_id=api_id,
         api_hash=api_hash,
         session_name=session_name,
         phone_number=phone_number or None,
         password=password or None,
+        invite_interval_seconds=invite_interval,
     )

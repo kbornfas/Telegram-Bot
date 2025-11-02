@@ -41,3 +41,15 @@ def test_parse_identifiers_mixed():
     items = ["@cat", "+123", "456"]
     identifiers = parse_identifiers(items)
     assert [identifier.kind for identifier in identifiers] == ["username", "phone", "user_id"]
+
+
+def test_normalize_wrapped_username():
+    identifier = normalize_identifier("<@Alice>")
+    assert identifier.kind == "username"
+    assert identifier.value == "@Alice"
+
+
+def test_parse_identifiers_deduplicates():
+    items = ["@dog", "<@dog>", "+15551234567", "15551234567", "@DOG"]
+    identifiers = parse_identifiers(items)
+    assert [identifier.value for identifier in identifiers] == ["@dog", "+15551234567"]

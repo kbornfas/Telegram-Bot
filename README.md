@@ -12,6 +12,7 @@ This workspace contains a hybrid Telegram automation project:
 - Telegram Bot token (`BOT_TOKEN`)
 - Telegram API ID and API Hash (`TELETHON_API_ID`, `TELETHON_API_HASH`) for the user account that performs the adds
 - Optional: MTProto login helpers: `TELETHON_PHONE_NUMBER` (+country code), `TELETHON_PASSWORD` (if your account has 2FA)
+- Optional: rate limiting knob: `TELETHON_INVITE_INTERVAL_SECONDS` — minimum delay between invite requests (default `1.0` second)
 - Optional: `BOT_ALLOWED_CHATS` — comma-separated chat IDs allowed to execute `/add`
 
 ## Quick start (PowerShell)
@@ -30,6 +31,7 @@ python -m pip install -r requirements.txt
 # TELETHON_API_HASH=your_api_hash_value
 # TELETHON_PHONE_NUMBER=+15551234567
 # TELETHON_PASSWORD=optional_2fa_password
+# TELETHON_INVITE_INTERVAL_SECONDS=1.0
 # BOT_ALLOWED_CHATS=1234567890,0987654321
 
 # Option 2: export credentials for the current shell session
@@ -54,6 +56,10 @@ python -m src.userbot --phone +15551234567 https://t.me/yourGroupUsername +12345
 ```
 
 The first run will prompt for the Telegram login code (and 2FA password if enabled). If `TELETHON_PHONE_NUMBER`/`TELETHON_PASSWORD` are provided, only the one-time code is requested. The resulting session file is reused by both the CLI and the bot service.
+
+## Rate limiting
+
+Telegram enforces strict flood-control limits. The worker now throttles bulk adds according to `TELETHON_INVITE_INTERVAL_SECONDS`, ensuring requests are spread out to reduce “Too many requests” errors. Increase the delay if you see repeated flood-wait warnings.
 
 ## Testing
 

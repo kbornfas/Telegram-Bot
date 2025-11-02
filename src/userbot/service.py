@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Sequence, Tuple
 
 from telethon import TelegramClient
 from telethon.errors import RPCError
 from telethon.errors.rpcerrorlist import (
+    FloodWaitError,
     UserAlreadyParticipantError,
     UserNotMutualContactError,
+    UserNotParticipantError,
     UserPrivacyRestrictedError,
 )
 from telethon.tl import functions
-from telethon.tl.functions.channels import InviteToChannelRequest
+from telethon.tl.functions.channels import InviteToChannelRequest, GetParticipantRequest
 from telethon.tl.functions.messages import AddChatUserRequest
 from telethon.tl.types import InputPhoneContact
 
@@ -23,6 +26,8 @@ from ..config import TelethonSettings, load_telethon_settings
 from ..utils.identifiers import Identifier
 
 logger = logging.getLogger(__name__)
+
+MAX_FLOOD_WAIT_RETRIES = 2
 
 
 @dataclass(slots=True)
@@ -50,6 +55,8 @@ class AddUserService:
         self._worker_task: asyncio.Task[None] | None = None
         self._worker_started = asyncio.Event()
         self._running = False
+    self._invite_interval = 1.0
+    self._last_invite_at = 0.0
 
     async def start(self) -> None:
         self._ensure_settings()
@@ -125,6 +132,7 @@ class AddUserService:
                 raise RuntimeError(
                     "The Telethon session is logged in as a bot. Delete userbot_session.session and authorize with a user phone number."
                 )
+            self._invite_interval = max(self._settings.invite_interval_seconds, 0.0)
             return await self._process_with_client(client, payload)
 
     async def _process_with_client(self, client: TelegramClient, payload: AddUserPayload) -> AddUserResult:
@@ -193,44 +201,98 @@ class AddUserService:
         entity = await client.get_entity(chat_id)
 
         for identifier in identifiers:
-            try:
-                user = await self._resolve_user(client, identifier, resolved_users)
-                if user is None:
-                    logger.warning("Skipping %s: could not resolve to a Telegram user", identifier.value)
-                    result.failed.append(f"{identifier.value}: could not resolve user")
-                    continue
-
-                if getattr(entity, "megagroup", False) or getattr(entity, "broadcast", False):
-                    await client(InviteToChannelRequest(channel=entity, users=[user]))
-                else:
-                    await client(AddChatUserRequest(chat_id=entity.id, user_id=user.id, fwd_limit=0))
-                # Do a quick verification: fetch participants and confirm the user is present.
+            attempts = 0
+            while True:
                 try:
-                    await client.get_participant(entity, user)
-                except ValueError:
-                    logger.warning("Invite reported success but user missing afterwards: %s", identifier.value)
-                    result.failed.append(f"{identifier.value}: invited but not present after invite")
+                    user = await self._resolve_user(client, identifier, resolved_users)
+                    if user is None:
+                        logger.warning("Skipping %s: could not resolve to a Telegram user", identifier.value)
+                        result.failed.append(f"{identifier.value}: could not resolve user")
+                        break
+
+                    if getattr(entity, "megagroup", False) or getattr(entity, "broadcast", False):
+                        await self._throttle_invite()
+                        await client(InviteToChannelRequest(channel=entity, users=[user]))
+                    else:
+                        await self._throttle_invite()
+                        await client(AddChatUserRequest(chat_id=entity.id, user_id=user.id, fwd_limit=0))
+
+                    try:
+                        present = await self._verify_membership(client, entity, user)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("Could not verify membership for %s due to: %s", identifier.value, exc)
+                        present = True
+
+                    if present:
+                        logger.info("Added %s", identifier.value)
+                        result.added.append(identifier.value)
+                    else:
+                        logger.warning("Invite reported success but user missing afterwards: %s", identifier.value)
+                        result.failed.append(f"{identifier.value}: invited but not present after invite")
+                    break
+                except FloodWaitError as exc:
+                    attempts += 1
+                    wait_time = getattr(exc, "seconds", 0) or 1
+                    logger.warning(
+                        "Rate limited when adding %s: waiting %s seconds before retry (%s/%s)",
+                        identifier.value,
+                        wait_time,
+                        attempts,
+                        MAX_FLOOD_WAIT_RETRIES,
+                    )
+                    await asyncio.sleep(wait_time + 1)
+                    if attempts >= MAX_FLOOD_WAIT_RETRIES:
+                        result.failed.append(f"{identifier.value}: rate limited after multiple retries")
+                        break
+                except UserAlreadyParticipantError:
+                    logger.info("%s already a participant", identifier.value)
+                    result.added.append(identifier.value)
+                    break
+                except (UserPrivacyRestrictedError, UserNotMutualContactError) as exc:
+                    logger.warning("Privacy restriction for %s: %s", identifier.value, exc)
+                    result.failed.append(f"{identifier.value}: {exc}")
+                    break
                 except RPCError as exc:
-                    logger.debug("Could not verify membership for %s due to RPC error: %s", identifier.value, exc)
-                    logger.info("Added %s", identifier.value)
-                    result.added.append(identifier.value)
-                else:
-                    logger.info("Added %s", identifier.value)
-                    result.added.append(identifier.value)
-            except UserAlreadyParticipantError:
-                logger.info("%s already a participant", identifier.value)
-                result.added.append(identifier.value)
-            except (UserPrivacyRestrictedError, UserNotMutualContactError) as exc:
-                logger.warning("Privacy restriction for %s: %s", identifier.value, exc)
-                result.failed.append(f"{identifier.value}: {exc}")
-            except RPCError as exc:
-                logger.warning("Failed to add %s: %s", identifier.value, exc)
-                result.failed.append(f"{identifier.value}: {exc}")
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("Unexpected error adding %s: %s", identifier.value, exc)
-                result.failed.append(f"{identifier.value}: {exc}")
+                    logger.warning("Failed to add %s: %s", identifier.value, exc)
+                    result.failed.append(f"{identifier.value}: {exc}")
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("Unexpected error adding %s: %s", identifier.value, exc)
+                    result.failed.append(f"{identifier.value}: {exc}")
+                    break
 
         return result
+
+    async def _verify_membership(self, client: TelegramClient, entity: object, user: object) -> bool:
+        """Check whether the invited user is now a member of the target chat."""
+        try:
+            if getattr(entity, "megagroup", False) or getattr(entity, "broadcast", False) or getattr(entity, "gigagroup", False):
+                await client(GetParticipantRequest(channel=entity, participant=user))
+                return True
+        except UserNotParticipantError:
+            return False
+        except RPCError as exc:
+            logger.debug("Channel participant check failed for %s: %s", getattr(user, "id", "?"), exc)
+
+        try:
+            participants = await client.get_participants(entity, limit=0)
+        except RPCError as exc:
+            logger.debug("get_participants failed while verifying %s: %s", getattr(user, "id", "?"), exc)
+            return True
+
+        user_id = getattr(user, "id", None)
+        return any(getattr(participant, "id", None) == user_id for participant in participants)
+
+    async def _throttle_invite(self) -> None:
+        if self._invite_interval <= 0:
+            self._last_invite_at = time.monotonic()
+            return
+        now = time.monotonic()
+        wait = self._last_invite_at + self._invite_interval - now
+        if wait > 0:
+            await asyncio.sleep(wait)
+            now = time.monotonic()
+        self._last_invite_at = now
 
     async def _resolve_user(
         self,
