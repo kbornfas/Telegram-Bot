@@ -9,7 +9,14 @@ from typing import Any, Dict, List, Sequence
 import httpx
 
 from .config import load_bot_settings
-from .userbot.service import AddUserPayload, AddUserRequest, AddUserResult, AddUserService
+from .userbot.service import (
+    AddUserPayload,
+    AddUserRequest,
+    AddUserResult,
+    AddUserService,
+    VerifyUsersRequest,
+    VerifyUsersResult,
+)
 from .utils.identifiers import parse_identifiers
 
 logger = logging.getLogger(__name__)
@@ -93,11 +100,20 @@ class BotServer:
             return
 
         if command == "/help":
-            await self._send_message(chat_id, "Use /add and provide usernames (with or without @) or phone numbers.")
+            await self._send_message(
+                chat_id,
+                "Commands:\n"
+                " • /add <identifiers> — queue adds for resolved users.\n"
+                " • /verify <identifiers> — check which users can be resolved before adding.",
+            )
             return
 
         if command == "/add":
             await self._handle_add(chat_id, message, args)
+            return
+
+        if command == "/verify":
+            await self._handle_verify(chat_id, message, args)
 
     async def _handle_add(self, chat_id: int, message: Dict[str, Any], args: List[str]) -> None:
         if self._settings.allowed_chats and chat_id not in self._settings.allowed_chats:
@@ -117,13 +133,39 @@ class BotServer:
         await self._send_message(chat_id, f"Processing {len(identifiers)} users, please wait...")
 
         try:
-            result = await self._service.enqueue(AddUserRequest(payload=payload))
+            result = await self._service.enqueue_add(AddUserRequest(payload=payload))
         except Exception as exc:  # noqa: BLE001
             logger.exception("Bulk add failed")
             await self._send_message(chat_id, f"❌ Failed to add users: {exc}")
             return
 
         text = self._format_summary(result)
+        await self._send_message(chat_id, text)
+
+    async def _handle_verify(self, chat_id: int, message: Dict[str, Any], args: List[str]) -> None:
+        if self._settings.allowed_chats and chat_id not in self._settings.allowed_chats:
+            await self._send_message(chat_id, "This chat is not authorized to run verification commands.")
+            return
+
+        if not args:
+            await self._send_message(chat_id, "Usage: /verify user1 +1555123456 @another")
+            return
+
+        identifiers = parse_identifiers(args)
+        request = VerifyUsersRequest(
+            identifiers=identifiers,
+            requested_by=self._extract_user_id(message.get("from")),
+        )
+        await self._send_message(chat_id, f"Verifying {len(identifiers)} users, please wait...")
+
+        try:
+            result = await self._service.enqueue_verify(request)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Verification failed")
+            await self._send_message(chat_id, f"❌ Verification failed: {exc}")
+            return
+
+        text = self._format_verification(result)
         await self._send_message(chat_id, text)
 
     async def _send_message(self, chat_id: int, text: str) -> None:
@@ -163,6 +205,22 @@ class BotServer:
                 lines.append(f"  ... and {len(result.failed) - 10} more")
         if not result.added and not result.failed:
             lines.append("No users were added. They may have privacy restrictions or invalid data.")
+        return "\n".join(lines)
+
+    def _format_verification(self, result: VerifyUsersResult) -> str:
+        lines = ["Verification complete."]
+        if result.resolved:
+            lines.append(f"✅ Resolvable ({len(result.resolved)}):")
+            lines.extend(f"  • {entry}" for entry in result.resolved[:10])
+            if len(result.resolved) > 10:
+                lines.append(f"  ... and {len(result.resolved) - 10} more")
+        if result.unresolved:
+            lines.append(f"❌ Unresolved ({len(result.unresolved)}):")
+            lines.extend(f"  • {entry}" for entry in result.unresolved[:10])
+            if len(result.unresolved) > 10:
+                lines.append(f"  ... and {len(result.unresolved) - 10} more")
+        if not result.resolved and not result.unresolved:
+            lines.append("No identifiers were processed.")
         return "\n".join(lines)
 
 

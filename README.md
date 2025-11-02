@@ -2,7 +2,7 @@
 
 This workspace contains a hybrid Telegram automation project:
 
-- **Bot API service** (`src/bot_app.py`) uses a lightweight HTTP long-polling loop to listen for commands (e.g., `/add`) in private chats, groups, supergroups, and channels.
+- **Bot API service** (`src/bot_app.py`) uses a lightweight HTTP long-polling loop to listen for commands (e.g., `/add`, `/verify`) in private chats, groups, supergroups, and channels.
 - **Telethon userbot** (`src/userbot/service.py`) signs in with a real user account to add members directly by phone number, username, or numeric ID—no invite links required.
 - **Utilities** in `src/utils` normalize identifiers and manage configuration.
 
@@ -43,7 +43,7 @@ $Env:TELETHON_API_HASH = 'your_api_hash'
 python -m src.bot_app
 ```
 
-The bot replies with a summary after processing, listing users added and any failures.
+The bot replies with a summary after processing, listing users added and any failures. Use `/verify` to run the same identifier parsing plus Telethon resolution pipeline without sending invites; the bot reports which usernames, phone numbers, or IDs could be resolved alongside reasons for any that failed.
 
 ## Standalone Telethon usage
 
