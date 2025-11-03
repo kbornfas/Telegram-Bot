@@ -14,6 +14,7 @@ from .userbot.service import (
     AddUserRequest,
     AddUserResult,
     AddUserService,
+    ResolvedTelegramUser,
     VerifyUsersRequest,
     VerifyUsersResult,
 )
@@ -209,7 +210,12 @@ class BotServer:
 
     def _format_verification(self, result: VerifyUsersResult) -> str:
         lines = ["Verification complete."]
-        if result.resolved:
+        if result.details:
+            lines.append(f"✅ Resolvable ({len(result.details)}):")
+            lines.extend(f"  • {self._format_resolved_detail(entry)}" for entry in result.details[:10])
+            if len(result.details) > 10:
+                lines.append(f"  ... and {len(result.details) - 10} more")
+        elif result.resolved:
             lines.append(f"✅ Resolvable ({len(result.resolved)}):")
             lines.extend(f"  • {entry}" for entry in result.resolved[:10])
             if len(result.resolved) > 10:
@@ -222,6 +228,16 @@ class BotServer:
         if not result.resolved and not result.unresolved:
             lines.append("No identifiers were processed.")
         return "\n".join(lines)
+
+    def _format_resolved_detail(self, detail: ResolvedTelegramUser) -> str:
+        extras: List[str] = []
+        extras.append(f"id {detail.user_id}")
+        if detail.phone:
+            extras.append(f"phone {detail.phone}")
+        if detail.username and not detail.identifier.lstrip("@").lower() == detail.username.lower():
+            extras.append(f"@{detail.username}")
+        summary = ", ".join(extras)
+        return f"{detail.identifier} → {summary}" if summary else detail.identifier
 
 
 def run_bot(service: AddUserService) -> None:

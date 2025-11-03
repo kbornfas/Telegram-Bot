@@ -26,6 +26,13 @@ def normalize_identifier(raw: str) -> Identifier:
     if not candidate:
         raise ValueError("Empty identifier")
 
+    lowered = candidate.lower()
+    if lowered.startswith(("id:", "uid:", "user:")):
+        user_id = candidate.split(":", 1)[1].strip()
+        if not user_id.isdigit():
+            raise ValueError("User id tokens must be numeric after the prefix")
+        return Identifier(kind="user_id", value=user_id)
+
     stripped = candidate.replace(" ", "").replace("-", "")
     if stripped.startswith("00") and stripped[2:].isdigit():
         stripped = "+" + stripped[2:]

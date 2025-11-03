@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
-from src.utils.identifiers import Identifier, normalize_identifier, parse_identifiers
+from src.utils.identifiers import normalize_identifier, parse_identifiers
 
 
 def test_normalize_phone_with_plus():
@@ -35,6 +33,12 @@ def test_normalize_numeric_user_id():
     identifier = normalize_identifier("123456")
     assert identifier.kind == "user_id"
     assert identifier.value == "123456"
+
+
+def test_normalize_user_id_with_prefix():
+    identifier = normalize_identifier("id: 987654321")
+    assert identifier.kind == "user_id"
+    assert identifier.value == "987654321"
 
 
 def test_parse_identifiers_mixed():

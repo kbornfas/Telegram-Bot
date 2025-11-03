@@ -9,7 +9,8 @@ from typing import List
 from dotenv import load_dotenv
 
 # Load variables from a local .env file if present so developers can keep secrets out of source.
-load_dotenv()
+# override=True ensures the .env file wins over any stale environment variables from previous sessions.
+load_dotenv(override=True)
 
 
 @dataclasses.dataclass
