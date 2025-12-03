@@ -252,12 +252,55 @@ async function handleGroupManagement(cli, contactsManager, groupManager) {
     const group = await cli.selectGroup();
     if (!group) return;
 
-    // Select contacts to add
-    const contacts = await cli.selectContacts();
-    if (contacts.length === 0) return;
+    // Get all contacts
+    const allContacts = contactsManager.getContacts();
+    if (allContacts.length === 0) {
+      console.log(chalk.yellow('\n⚠️  No contacts available!'));
+      return;
+    }
+
+    // Ask how many contacts to add
+    const contactCountChoices = [];
+    
+    if (allContacts.length >= 50) contactCountChoices.push({ name: `📊 Add 50 contacts`, value: 50 });
+    if (allContacts.length >= 100) contactCountChoices.push({ name: `📊 Add 100 contacts`, value: 100 });
+    if (allContacts.length >= 200) contactCountChoices.push({ name: `📊 Add 200 contacts`, value: 200 });
+    if (allContacts.length >= 500) contactCountChoices.push({ name: `📊 Add 500 contacts`, value: 500 });
+    if (allContacts.length >= 1000) contactCountChoices.push({ name: `📊 Add 1000 contacts`, value: 1000 });
+    contactCountChoices.push({ name: `🌐 Add ALL contacts (${allContacts.length})`, value: 'all' });
+    contactCountChoices.push({ name: `👤 Select specific contacts manually`, value: 'manual' });
+    contactCountChoices.push(new inquirer.Separator());
+    contactCountChoices.push({ name: '⬅️  Back', value: 'back' });
+
+    const { contactCount } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'contactCount',
+        message: `How many contacts do you want to add? (${allContacts.length} available)`,
+        choices: contactCountChoices
+      }
+    ]);
+
+    if (contactCount === 'back') return;
+
+    let selectedContacts;
+    
+    if (contactCount === 'manual') {
+      // Manual selection
+      selectedContacts = await cli.selectContacts();
+      if (selectedContacts.length === 0) return;
+    } else if (contactCount === 'all') {
+      // All contacts
+      selectedContacts = allContacts;
+    } else {
+      // Specific number - take first N contacts
+      selectedContacts = allContacts.slice(0, contactCount);
+    }
+
+    console.log(chalk.cyan(`\n📋 Selected ${selectedContacts.length} contacts to add to "${group.title}"\n`));
 
     // Confirm
-    const confirmed = await cli.confirmAddToGroup(contacts, group);
+    const confirmed = await cli.confirmAddToGroup(selectedContacts, group);
     if (!confirmed) {
       console.log(chalk.yellow('\n❌ Operation cancelled.'));
       return;
@@ -265,7 +308,7 @@ async function handleGroupManagement(cli, contactsManager, groupManager) {
 
     // Add contacts
     console.log(chalk.cyan('\n📤 Adding contacts to group...\n'));
-    const results = await groupManager.addMultipleContactsToGroup(contacts, group);
+    const results = await groupManager.addMultipleContactsToGroup(selectedContacts, group);
     console.log(groupManager.formatResults(results));
   }
 }
