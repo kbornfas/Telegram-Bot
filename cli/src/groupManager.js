@@ -127,7 +127,7 @@ class GroupManager {
     return error.message || 'Unknown error';
   }
 
-  async addMultipleContactsToGroup(contacts, group, delay = 2000) {
+  async addMultipleContactsToGroup(contacts, group, delay = 35000) {
     const results = {
       successful: [],
       failed: [],
