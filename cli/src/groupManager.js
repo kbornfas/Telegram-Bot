@@ -19,15 +19,25 @@ class GroupManager {
           return entity.className === 'Chat' || 
                  (entity.className === 'Channel' && entity.megagroup);
         })
-        .map(dialog => ({
-          id: dialog.entity.id.toString(),
-          title: dialog.entity.title || 'Unknown Group',
-          accessHash: dialog.entity.accessHash?.toString() || '',
-          participantsCount: dialog.entity.participantsCount || 0,
-          isChannel: dialog.entity.className === 'Channel',
-          isMegagroup: dialog.entity.megagroup || false,
-          entity: dialog.entity
-        }));
+        .map(dialog => {
+          const entity = dialog.entity;
+          const isChannel = entity.className === 'Channel';
+          const isMegagroup = entity.megagroup || false;
+          
+          return {
+            id: entity.id.toString(),
+            title: entity.title || 'Unknown Group',
+            accessHash: entity.accessHash?.toString() || '0',
+            participantsCount: entity.participantsCount || 0,
+            isChannel: isChannel,
+            isMegagroup: isMegagroup,
+            // A group is a supergroup if it's a Channel with megagroup=true
+            isSupergroup: isChannel && isMegagroup,
+            // Regular chat (basic group)
+            isBasicGroup: entity.className === 'Chat',
+            entity: entity
+          };
+        });
 
       return this.groups;
     } catch (error) {
@@ -42,7 +52,7 @@ class GroupManager {
 
   getGroupChoices() {
     return this.groups.map(g => ({
-      name: `${g.title} (${g.participantsCount || '?'} members)`,
+      name: `${g.title} (${g.participantsCount || '?'} members) ${g.isSupergroup ? '[Supergroup]' : '[Basic]'}`,
       value: g.id,
       short: g.title
     }));
@@ -54,31 +64,26 @@ class GroupManager {
 
   async addContactToGroup(contact, group) {
     try {
-      if (group.isChannel || group.isMegagroup) {
-        // For supergroups/megagroups
+      // Use the stored entity directly - this is more reliable
+      const groupEntity = group.entity;
+      
+      // Get the user entity
+      const userEntity = await this.client.getEntity(BigInt(contact.id));
+      
+      if (group.isSupergroup || group.isChannel) {
+        // For supergroups/megagroups - use channels.InviteToChannel with entity
         await this.client.invoke(
           new Api.channels.InviteToChannel({
-            channel: new Api.InputChannel({
-              channelId: BigInt(group.id),
-              accessHash: BigInt(group.accessHash)
-            }),
-            users: [
-              new Api.InputUser({
-                userId: BigInt(contact.id),
-                accessHash: BigInt(contact.accessHash)
-              })
-            ]
+            channel: groupEntity,
+            users: [userEntity]
           })
         );
       } else {
-        // For regular groups
+        // For basic/regular groups - use messages.AddChatUser
         await this.client.invoke(
           new Api.messages.AddChatUser({
-            chatId: BigInt(group.id),
-            userId: new Api.InputUser({
-              userId: BigInt(contact.id),
-              accessHash: BigInt(contact.accessHash)
-            }),
+            chatId: groupEntity.id,
+            userId: userEntity,
             fwdLimit: 100
           })
         );
@@ -106,7 +111,11 @@ class GroupManager {
       'USERS_TOO_MUCH': 'Group is full',
       'USER_KICKED': 'User was kicked from group',
       'CHAT_WRITE_FORBIDDEN': 'Cannot write to this chat',
-      'USER_BANNED_IN_CHANNEL': 'User is banned'
+      'USER_BANNED_IN_CHANNEL': 'User is banned',
+      'CHAT_ID_INVALID': 'Invalid chat ID',
+      'CHANNEL_INVALID': 'Invalid channel',
+      'CHANNEL_PRIVATE': 'Channel is private',
+      'USER_ID_INVALID': 'Invalid user ID'
     };
 
     for (const [key, message] of Object.entries(errorMap)) {
