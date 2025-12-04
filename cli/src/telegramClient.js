@@ -77,6 +77,13 @@ class TelegramClientManager {
         connectionRetries: 5,
         useWSS: false,
         timeout: 30,
+        baseLogger: {
+          log: () => {},
+          info: () => {},
+          warn: () => {},
+          error: console.error,
+          debug: () => {},
+        }
       }
     );
 
