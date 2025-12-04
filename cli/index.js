@@ -220,6 +220,12 @@ async function handleCompose(cli, contactsManager, messageSender, dataManager, s
     return;
   }
 
+  // Handle FORCE send to all numbers in file
+  if (mode === 'forcefile') {
+    await handleForceSendToFile(cli, messageSender, dataManager);
+    return;
+  }
+
   // Handle reliable send to ALL
   if (mode === 'reliable') {
     await handleReliableSendAll(cli, contactsManager, messageSender);
@@ -372,6 +378,111 @@ function getTimeAgo(date) {
   if (seconds < 3600) return `${Math.floor(seconds / 60)} minutes ago`;
   if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`;
   return `${Math.floor(seconds / 86400)} days ago`;
+}
+
+async function handleForceSendToFile(cli, messageSender, dataManager) {
+  console.log(chalk.cyan('\n' + '═'.repeat(60)));
+  console.log(chalk.cyan.bold('  💪 FORCE SEND TO ALL NUMBERS IN FILE'));
+  console.log(chalk.cyan('═'.repeat(60) + '\n'));
+
+  console.log(chalk.yellow('  This will attempt to send a message to EVERY phone number'));
+  console.log(chalk.yellow('  in your file, regardless of whether they have Telegram.\n'));
+  console.log(chalk.gray('  • Numbers WITH Telegram: Message will be delivered'));
+  console.log(chalk.gray('  • Numbers WITHOUT Telegram: Will show as failed\n'));
+
+  // Select file
+  const files = dataManager.listContactFiles();
+  
+  if (files.length === 0) {
+    console.log(chalk.yellow('⚠️  No contact files found in data folder!'));
+    return;
+  }
+
+  const { filePath } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'filePath',
+      message: 'Select file to force send to:',
+      choices: [
+        ...files.map(f => {
+          try {
+            const contacts = dataManager.readContactFile(f.path);
+            return { name: `📄 ${f.name} (${contacts.length} contacts)`, value: f.path };
+          } catch {
+            return { name: `📄 ${f.name} (error)`, value: f.path };
+          }
+        }),
+        new inquirer.Separator(),
+        { name: '⬅️  Back', value: 'back' }
+      ]
+    }
+  ]);
+
+  if (filePath === 'back') return;
+
+  // Read contacts
+  let fileContacts;
+  try {
+    fileContacts = dataManager.readContactFile(filePath);
+  } catch (error) {
+    console.log(chalk.red(`\n❌ Error reading file: ${error.message}`));
+    return;
+  }
+
+  // Filter and normalize phone numbers
+  const phoneContacts = fileContacts
+    .filter(c => c.phone && c.phone.trim())
+    .map((c, idx) => {
+      let phone = c.phone.trim().replace(/[\s\-\(\)]/g, '');
+      if (!phone.startsWith('+')) phone = '+' + phone;
+      return { ...c, phone, index: idx + 1 };
+    });
+
+  if (phoneContacts.length === 0) {
+    console.log(chalk.yellow('\n⚠️  No phone numbers found in file!'));
+    return;
+  }
+
+  console.log(chalk.green(`\n✅ Found ${phoneContacts.length} phone numbers to message\n`));
+
+  // Preview
+  console.log(chalk.cyan('  Sample numbers:'));
+  phoneContacts.slice(0, 5).forEach((c, i) => {
+    console.log(chalk.gray(`     ${i + 1}. ${c.phone}`));
+  });
+  if (phoneContacts.length > 5) {
+    console.log(chalk.gray(`     ... and ${phoneContacts.length - 5} more\n`));
+  }
+
+  // Compose message
+  const message = await cli.composeMessage();
+  if (!message) return;
+
+  // Confirm
+  console.log(chalk.cyan('\n  📝 Message preview:'));
+  console.log(chalk.white('  ' + message.substring(0, 100) + (message.length > 100 ? '...' : '') + '\n'));
+
+  const { confirm } = await inquirer.prompt([
+    {
+      type: 'confirm',
+      name: 'confirm',
+      message: chalk.yellow(`Force send message to ALL ${phoneContacts.length} phone numbers?`),
+      default: false
+    }
+  ]);
+
+  if (!confirm) {
+    console.log(chalk.yellow('\n❌ Sending cancelled.'));
+    return;
+  }
+
+  // Force send to all numbers
+  console.log(chalk.cyan(`\n💪 Force sending to ${phoneContacts.length} numbers...\n`));
+  
+  const results = await messageSender.forceSendToPhones(phoneContacts, message);
+  
+  // Show results
+  console.log(messageSender.formatForceSendResults(results));
 }
 
 async function handleFileMessaging(cli, messageSender, dataManager) {

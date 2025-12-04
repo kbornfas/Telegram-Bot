@@ -576,6 +576,156 @@ class MessageSender {
     
     return output;
   }
+
+  /**
+   * Force send message to all phone numbers, attempting each one
+   * @param {Array} contacts - Array of contacts with phone numbers
+   * @param {string} message - Message to send
+   * @returns {Object} - Results with sent, noTelegram, failed arrays
+   */
+  async forceSendToPhones(contacts, message) {
+    const results = {
+      sent: [],           // Successfully sent
+      noTelegram: [],     // Phone doesn't have Telegram
+      failed: [],         // Other failures (blocked, etc.)
+      total: contacts.length
+    };
+
+    const progressBar = new cliProgress.SingleBar({
+      format: 'Sending |' + chalk.cyan('{bar}') + '| {percentage}% | {value}/{total} | {status}',
+      barCompleteChar: '\u2588',
+      barIncompleteChar: '\u2591',
+      hideCursor: true
+    });
+
+    progressBar.start(contacts.length, 0, { status: 'Starting...' });
+
+    for (let i = 0; i < contacts.length; i++) {
+      const contact = contacts[i];
+      const phone = contact.phone;
+      
+      progressBar.update(i, { status: phone.substring(0, 15) });
+
+      try {
+        // Try to get entity by phone number
+        const entity = await this.client.getEntity(phone);
+        
+        // Send the message
+        await this.client.sendMessage(entity, { message: message });
+        
+        results.sent.push({
+          phone,
+          index: contact.index,
+          userId: entity.id?.toString(),
+          username: entity.username || null
+        });
+        
+      } catch (error) {
+        const errorMsg = error.message || '';
+        
+        // Check if it's a "not on Telegram" error
+        if (errorMsg.includes('Could not find') || 
+            errorMsg.includes('not found') ||
+            errorMsg.includes('USERNAME_NOT_OCCUPIED') ||
+            errorMsg.includes('PHONE_NOT_OCCUPIED') ||
+            errorMsg.includes('Cannot get entity')) {
+          results.noTelegram.push({
+            phone,
+            index: contact.index,
+            reason: 'Not on Telegram'
+          });
+        } else {
+          results.failed.push({
+            phone,
+            index: contact.index,
+            reason: this.parseError(error)
+          });
+        }
+      }
+
+      progressBar.update(i + 1, { status: phone.substring(0, 15) });
+
+      // Delay between messages to avoid rate limiting
+      if (i < contacts.length - 1) {
+        await this.sleep(this.delay);
+      }
+    }
+
+    progressBar.stop();
+    return results;
+  }
+
+  formatForceSendResults(results) {
+    let output = '\n' + chalk.cyan('═'.repeat(60)) + '\n';
+    output += chalk.cyan.bold('  💪 FORCE SEND RESULTS\n');
+    output += chalk.cyan('═'.repeat(60)) + '\n\n';
+
+    const successRate = results.total > 0 
+      ? ((results.sent.length / results.total) * 100).toFixed(1)
+      : 0;
+
+    output += chalk.white(`  📋 Total phone numbers:       ${results.total}\n`);
+    output += chalk.green(`  ✅ Successfully sent:         ${results.sent.length} (${successRate}%)\n`);
+    output += chalk.yellow(`  📵 No Telegram account:       ${results.noTelegram.length}\n`);
+    
+    if (results.failed.length > 0) {
+      output += chalk.red(`  ❌ Failed (other reasons):    ${results.failed.length}\n`);
+    }
+
+    // Show sent
+    if (results.sent.length > 0) {
+      output += chalk.green('\n  ✅ Messages delivered to:\n');
+      results.sent.slice(0, 10).forEach((r, i) => {
+        const username = r.username ? ` (@${r.username})` : '';
+        output += chalk.gray(`     ${i + 1}. ${r.phone}${username}\n`);
+      });
+      if (results.sent.length > 10) {
+        output += chalk.gray(`     ... and ${results.sent.length - 10} more\n`);
+      }
+    }
+
+    // Show no Telegram
+    if (results.noTelegram.length > 0) {
+      output += chalk.yellow('\n  📵 No Telegram (cannot message):\n');
+      results.noTelegram.slice(0, 10).forEach((r, i) => {
+        output += chalk.gray(`     ${i + 1}. ${r.phone}\n`);
+      });
+      if (results.noTelegram.length > 10) {
+        output += chalk.gray(`     ... and ${results.noTelegram.length - 10} more\n`);
+      }
+    }
+
+    // Show failed
+    if (results.failed.length > 0) {
+      output += chalk.red('\n  ❌ Failed:\n');
+      results.failed.slice(0, 5).forEach((r, i) => {
+        output += chalk.red(`     ${i + 1}. ${r.phone}: ${r.reason}\n`);
+      });
+      if (results.failed.length > 5) {
+        output += chalk.red(`     ... and ${results.failed.length - 5} more\n`);
+      }
+    }
+
+    output += '\n' + chalk.cyan('─'.repeat(60)) + '\n';
+    
+    if (results.sent.length === results.total) {
+      output += chalk.green.bold('  🎉 ALL MESSAGES DELIVERED SUCCESSFULLY!\n');
+    } else if (results.sent.length > 0) {
+      output += chalk.white(`  📊 Delivery rate: ${successRate}%\n`);
+      output += chalk.gray(`     ${results.sent.length} out of ${results.total} messages delivered\n`);
+    } else {
+      output += chalk.red('  ⚠️  No messages were delivered\n');
+    }
+
+    if (results.noTelegram.length > 0) {
+      output += chalk.yellow(`\n  💡 ${results.noTelegram.length} contacts don't have Telegram.\n`);
+      output += chalk.gray('     Reach them via SMS, WhatsApp, or invite to Telegram.\n');
+    }
+
+    output += chalk.cyan('═'.repeat(60)) + '\n';
+
+    return output;
+  }
 }
 
 export default MessageSender;

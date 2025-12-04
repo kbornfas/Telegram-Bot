@@ -59,6 +59,8 @@ class CLI {
           { name: '🚀 SEND TO ALL CONTACTS (reliable with retry)', value: 'reliable' },
           { name: '📤 Send to NEWLY IMPORTED contacts only', value: 'newonly' },
           new inquirer.Separator(),
+          { name: '💪 FORCE SEND to all numbers in FILE', value: 'forcefile' },
+          new inquirer.Separator(),
           { name: '👤 Send to individual contacts', value: 'individual' },
           { name: '📦 Send in batches', value: 'batch' },
           { name: '🌐 Send to ALL contacts (basic)', value: 'all' },
